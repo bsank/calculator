@@ -298,6 +298,11 @@ class Calculator:
                 
                 # Clean and format the operation string
                 operation = entry['operation']
+                
+                # Skip entries with empty operations or "Clear" operations
+                if not operation or operation == "Clear":
+                    continue
+                
                 # Replace special characters with proper operators
                 operation = operation.replace('×', '*')
                 operation = operation.replace('÷', '/')
@@ -306,6 +311,8 @@ class Calculator:
                 operation = operation.replace(')', '')
                 operation = operation.replace('.', '_')
                 operation = operation.replace('=', 'equals')
+                operation = operation.replace('Sign change', 'sign_change')
+                operation = operation.replace('Mode changed to Scientific', 'mode_change')
                 
                 # Handle the result - ensure it's a valid field value
                 result = entry['result']
@@ -321,10 +328,6 @@ class Calculator:
                         result = float(numeric_result)  # Convert to float
                     except ValueError:
                         result = 0
-                
-                # Skip entries with empty operations or "Clear" operations
-                if not operation or operation == "Clear":
-                    continue
                 
                 # Create the line protocol entry
                 # Format: measurement,tag_key=tag_value field_key=field_value timestamp
