@@ -322,10 +322,18 @@ class Calculator:
                     except ValueError:
                         result = 0
                 
+                # Skip entries with empty operations or "Clear" operations
+                if not operation or operation == "Clear":
+                    continue
+                
                 # Create the line protocol entry
                 # Format: measurement,tag_key=tag_value field_key=field_value timestamp
                 line = f"calculator_operation,operation={operation} result={result} {timestamp_ns}"
                 line_protocol.append(line)
+            
+            if not line_protocol:
+                messagebox.showinfo("Export", "No valid operations to export!")
+                return
             
             # Prepare the request
             url = f"{self.influxdb_url}/api/v2/write"
