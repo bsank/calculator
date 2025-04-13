@@ -1,0 +1,20 @@
+# Environment and virtual environment
+.env/
+venv/
+__pycache__/
+*.pyc
+
+# Sensitive files
+influxdb_settings.json
+calculator_log.json
+calculator_errors.log
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS specific files
+.DS_Store
+Thumbs.db 
