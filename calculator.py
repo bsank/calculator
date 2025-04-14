@@ -13,12 +13,17 @@ import logging
 import time
 from dotenv import load_dotenv
 
-# Set up logging
+# Set up logging - only log errors to file
 logging.basicConfig(
     filename='calculator_errors.log',
     level=logging.ERROR,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
 )
+
+# Disable other loggers
+logging.getLogger('urllib3').setLevel(logging.ERROR)
+logging.getLogger('requests').setLevel(logging.ERROR)
 
 class Calculator:
     def __init__(self, root):
@@ -57,14 +62,18 @@ class Calculator:
         if not all([self.influxdb_url, self.influxdb_token, self.influxdb_org, self.influxdb_bucket]):
             self.load_influxdb_settings()
         
-        # Create and configure the display
+        # Create display
         self.display_var = tk.StringVar()
-        self.display = ttk.Entry(root,
-                               textvariable=self.display_var,
-                               justify="right",
-                               style="Display.TEntry",
-                               state="readonly")
-        self.display.grid(row=0, column=0, columnspan=4, padx=20, pady=20, sticky="nsew")
+        self.display = tk.Entry(
+            root,
+            textvariable=self.display_var,
+            font=('Arial', 20),
+            justify='right',
+            bd=5,
+            fg='black',  # Set text color to black
+            bg='white'   # Set background to white for better contrast
+        )
+        self.display.grid(row=0, column=0, columnspan=4, padx=5, pady=5, sticky='nsew')
         
         # Create toggle button for scientific mode
         self.toggle_btn = tk.Button(root, text="Scientific", font=("Arial", 12),
@@ -287,8 +296,8 @@ class Calculator:
     def export_to_influxdb(self, operation, result):
         """Export operation data to InfluxDB"""
         try:
-            # Load environment variables
-            load_dotenv()
+            # Force reload environment variables
+            load_dotenv(override=True)
             
             # Get InfluxDB settings from environment variables
             url = os.getenv('INFLUXDB_URL')
@@ -296,8 +305,8 @@ class Calculator:
             org = os.getenv('INFLUXDB_ORG')
             bucket = os.getenv('INFLUXDB_BUCKET')
             
+            # If no settings, silently return
             if not all([url, token, org, bucket]):
-                print("InfluxDB settings not found in .env file")
                 return
             
             # Format the operation for better readability
@@ -333,10 +342,14 @@ class Calculator:
             )
             
             if response.status_code != 204:
-                print(f"Error exporting to InfluxDB: {response.status_code} - {response.text}")
+                error_msg = f"Data not exported: {response.status_code} - {response.text}"
+                logging.error(error_msg)
             
         except Exception as e:
-            print(f"Error exporting to InfluxDB: {str(e)}")
+            error_msg = f"Data not exported: {str(e)}"
+            logging.error(error_msg)
+            # Don't raise the exception, just log it and continue
+            pass
     
     def export_log(self):
         """Export the log in various formats for metrics and searching"""
@@ -533,7 +546,7 @@ class Calculator:
         elif text == '=':
             if self.operation in ['sin', 'cos', 'tan']:
                 try:
-                    angle = self.first_number
+                    angle = float(self.current_number or '0')
                     if self.operation == 'sin':
                         result = math.sin(math.radians(angle))
                     elif self.operation == 'cos':
@@ -543,10 +556,10 @@ class Calculator:
                     formatted_result = f"{result:.8f}".rstrip('0').rstrip('.')
                     self.display_var.set(formatted_result)
                     self.current_number = formatted_result
-                    self.add_to_log(f"{self.operation}({angle})", formatted_result)
-                    self.export_to_influxdb(f"{self.operation}({angle})", formatted_result)
+                    self.add_to_log(f"{self.operation}({angle}°)", formatted_result)
+                    self.export_to_influxdb(f"{self.operation}({angle}°)", formatted_result)
                 except ValueError:
-                    self.display_var.set("Error")
+                    self.display_var.set("Error: Invalid angle")
                     self.current_number = ""
                     self.add_to_log(f"{self.operation}", "Error")
                     self.export_to_influxdb(f"{self.operation}", "Error")
@@ -593,9 +606,16 @@ class Calculator:
         # Scientific calculator functions
         elif text in ['sin', 'cos', 'tan']:
             if self.current_number:
-                self.first_number = float(self.current_number)
-                self.operation = text
-                self.should_clear_display = True
+                try:
+                    self.first_number = float(self.current_number)
+                    self.operation = text
+                    self.should_clear_display = True
+                except ValueError:
+                    self.display_var.set("Error: Invalid input")
+                    self.current_number = ""
+                    self.first_number = None
+                    self.operation = None
+                    self.should_clear_display = True
         
         elif text == 'π':
             self.current_number = str(math.pi)
@@ -606,34 +626,65 @@ class Calculator:
 
     def calculate(self):
         if self.first_number is not None and self.operation and self.current_number:
-            second_number = float(self.current_number)
-            if self.operation == '+':
-                result = self.first_number + second_number
-            elif self.operation == '-':
-                result = self.first_number - second_number
-            elif self.operation == '×':
-                result = self.first_number * second_number
-            elif self.operation == '÷':
-                if second_number != 0:
-                    result = self.first_number / second_number
-                else:
-                    result = "Error"
-            
-            # Format the result
-            if isinstance(result, float):
-                if result.is_integer():
-                    result = int(result)
-                else:
-                    result = f"{result:.8f}".rstrip('0').rstrip('.')
-            
-            # Format the operation string consistently
-            operation_str = f"{self.first_number} {self.operation} {second_number}"
-            self.add_to_log(operation_str, str(result))
-            self.export_to_influxdb(operation_str, str(result))
-            
-            self.display_var.set(str(result))
-            self.current_number = str(result)
-            self.first_number = float(result) if result != "Error" else None
+            try:
+                second_number = float(self.current_number)
+                if self.operation == '+':
+                    result = self.first_number + second_number
+                elif self.operation == '-':
+                    result = self.first_number - second_number
+                elif self.operation == '×':
+                    result = self.first_number * second_number
+                elif self.operation == '÷':
+                    if second_number != 0:
+                        result = self.first_number / second_number
+                    else:
+                        result = "Error: Division by zero"
+                        self.display_var.set(result)
+                        self.current_number = ""
+                        self.first_number = None
+                        self.operation = None
+                        self.should_clear_display = True
+                        return
+                
+                # Check for overflow
+                if isinstance(result, float) and (abs(result) > 1e308 or (abs(result) < 1e-308 and result != 0)):
+                    result = "Error: Number too large or small"
+                    self.display_var.set(result)
+                    self.current_number = ""
+                    self.first_number = None
+                    self.operation = None
+                    self.should_clear_display = True
+                    return
+                
+                # Format the result
+                if isinstance(result, float):
+                    if result.is_integer():
+                        result = int(result)
+                    else:
+                        result = f"{result:.8f}".rstrip('0').rstrip('.')
+                
+                # Format the operation string consistently
+                operation_str = f"{self.first_number} {self.operation} {second_number}"
+                self.add_to_log(operation_str, str(result))
+                self.export_to_influxdb(operation_str, str(result))
+                
+                self.display_var.set(str(result))
+                self.current_number = str(result)
+                self.first_number = float(result) if result != "Error" else None
+                
+            except ValueError:
+                self.display_var.set("Error: Invalid input")
+                self.current_number = ""
+                self.first_number = None
+                self.operation = None
+                self.should_clear_display = True
+            except Exception as e:
+                self.display_var.set("Error: Calculation failed")
+                self.current_number = ""
+                self.first_number = None
+                self.operation = None
+                self.should_clear_display = True
+                logging.error(f"Calculation error: {str(e)}")
 
 if __name__ == '__main__':
     root = tk.Tk()
