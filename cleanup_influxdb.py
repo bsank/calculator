@@ -1,37 +1,44 @@
+import os
 import requests
-import json
-
-def load_influxdb_settings():
-    with open('influxdb_settings.json', 'r') as f:
-        return json.load(f)
+from dotenv import load_dotenv
 
 def cleanup_influxdb():
-    settings = load_influxdb_settings()
+    # Load environment variables
+    load_dotenv()
     
-    # Prepare the delete query
-    delete_query = '''
-    from(bucket: "calculator_logs")
-        |> range(start: 0)
-        |> filter(fn: (r) => r["_measurement"] == "calculator_operation")
-        |> drop()
-    '''
+    # Get InfluxDB settings from environment variables
+    url = os.getenv('INFLUXDB_URL', 'http://localhost:8086')
+    token = os.getenv('INFLUXDB_TOKEN')
+    org = os.getenv('INFLUXDB_ORG', 'calculator')
+    bucket = os.getenv('INFLUXDB_BUCKET', 'calculator_logs')
+    
+    print(f"Preparing to clean up all calculator operations from InfluxDB...")
+    print(f"Organization: {org}")
+    print(f"Bucket: {bucket}")
     
     # Prepare the request
-    url = f"{settings['url']}/api/v2/delete"
+    url = f"{url}/api/v2/delete"
     headers = {
-        'Authorization': f"Token {settings['token']}",
+        'Authorization': f"Token {token}",
         'Content-Type': 'application/json'
     }
     params = {
-        'org': settings['org'],
-        'bucket': settings['bucket']
+        'org': org,
+        'bucket': bucket
     }
     data = {
         'start': '1970-01-01T00:00:00Z',
-        'stop': '2030-01-01T00:00:00Z'
+        'stop': '2030-01-01T00:00:00Z',
+        'predicate': '_measurement="calculator_operation"'
     }
     
     try:
+        # Ask for confirmation
+        confirm = input("Are you sure you want to delete all calculator operations? (yes/no): ")
+        if confirm.lower() != 'yes':
+            print("Operation cancelled.")
+            return
+        
         response = requests.post(url, json=data, headers=headers, params=params)
         if response.status_code == 204:
             print("Successfully cleaned up InfluxDB data!")

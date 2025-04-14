@@ -10,6 +10,8 @@ from tkinter import filedialog
 import requests
 import urllib.parse
 import logging
+import time
+from dotenv import load_dotenv
 
 # Set up logging
 logging.basicConfig(
@@ -282,95 +284,59 @@ class Calculator:
         window.destroy()
         messagebox.showinfo("Settings Saved", "InfluxDB settings have been saved.")
     
-    def export_to_influxdb(self):
-        """Export logs to InfluxDB using Line Protocol format"""
-        if not self.log:
-            messagebox.showinfo("Export", "No logs to export!")
-            return
-            
+    def export_to_influxdb(self, operation, result):
+        """Export operation data to InfluxDB"""
         try:
-            # Prepare the data in Line Protocol format
-            line_protocol = []
-            for entry in self.log:
-                # Convert timestamp to nanoseconds
-                timestamp = datetime.strptime(entry['timestamp'], '%Y-%m-%d %H:%M:%S')
-                timestamp_ns = int(timestamp.timestamp() * 1e9)
-                
-                # Clean and format the operation string
-                operation = entry['operation']
-                
-                # Skip entries with empty operations or "Clear" operations
-                if not operation or operation == "Clear":
-                    continue
-                
-                # Replace special characters with proper operators
-                operation = operation.replace('×', '*')
-                operation = operation.replace('÷', '/')
-                operation = operation.replace(' ', '_')
-                operation = operation.replace('(', '')
-                operation = operation.replace(')', '')
-                operation = operation.replace('.', '_')
-                operation = operation.replace('=', 'equals')
-                operation = operation.replace('Sign change', 'sign_change')
-                operation = operation.replace('Mode changed to Scientific', 'mode_change')
-                
-                # Handle the result - ensure it's a valid field value
-                result = entry['result']
-                if not result or result.strip() == "":
-                    result = 0
-                elif result == "Error":
-                    result = 0
-                else:
-                    # Extract numeric value if possible
-                    try:
-                        # Remove any non-numeric characters except decimal point and negative sign
-                        numeric_result = ''.join(c for c in result if c.isdigit() or c in '.-')
-                        result = float(numeric_result)  # Convert to float
-                    except ValueError:
-                        result = 0
-                
-                # Create the line protocol entry
-                # Format: measurement,tag_key=tag_value field_key=field_value timestamp
-                line = f"calculator_operation,operation={operation} result={result} {timestamp_ns}"
-                line_protocol.append(line)
+            # Load environment variables
+            load_dotenv()
             
-            if not line_protocol:
-                messagebox.showinfo("Export", "No valid operations to export!")
+            # Get InfluxDB settings from environment variables
+            url = os.getenv('INFLUXDB_URL')
+            token = os.getenv('INFLUXDB_TOKEN')
+            org = os.getenv('INFLUXDB_ORG')
+            bucket = os.getenv('INFLUXDB_BUCKET')
+            
+            if not all([url, token, org, bucket]):
+                print("InfluxDB settings not found in .env file")
                 return
             
+            # Format the operation for better readability
+            if operation is None:
+                operation = "none"
+            else:
+                # Escape special characters and spaces in the operation string
+                operation = operation.replace('×', 'mul').replace('÷', 'div').replace(' ', '\\ ')
+                operation = operation.replace(',', '\\,').replace('=', '\\=')
+            
+            # Format the result - ensure it's a valid float
+            try:
+                result_float = float(result)
+                result_str = f"{result_float}"
+            except (ValueError, TypeError):
+                result_str = "0"
+            
+            # Create line protocol with proper escaping
+            timestamp = int(time.time() * 1e9)  # Current time in nanoseconds
+            line = f"calculator_operation,operation={operation} result={result_str} {timestamp}"
+            
             # Prepare the request
-            url = f"{self.influxdb_url}/api/v2/write"
-            params = {
-                'org': self.influxdb_org,
-                'bucket': self.influxdb_bucket,
-                'precision': 'ns'
-            }
             headers = {
-                'Authorization': f'Token {self.influxdb_token}',
+                'Authorization': f'Token {token}',
                 'Content-Type': 'text/plain; charset=utf-8'
             }
             
-            # Send the data
+            # Send data to InfluxDB
             response = requests.post(
-                url,
-                params=params,
+                f"{url}/api/v2/write?org={org}&bucket={bucket}",
                 headers=headers,
-                data='\n'.join(line_protocol)
+                data=line.encode('utf-8')
             )
             
-            if response.status_code == 204:
-                messagebox.showinfo("Export", "Successfully exported logs to InfluxDB!")
-            else:
-                error_msg = f"InfluxDB returned status code {response.status_code}: {response.text}"
-                print(f"Export Error: {error_msg}")
-                messagebox.showerror("Export Error", error_msg)
-                
-        except Exception as e:
-            error_msg = f"Failed to export to InfluxDB: {str(e)}"
-            print(f"Export Error: {error_msg}")
-            messagebox.showerror("Export Error", error_msg)
+            if response.status_code != 204:
+                print(f"Error exporting to InfluxDB: {response.status_code} - {response.text}")
             
-        # Don't destroy the window here - let the calling function handle it
+        except Exception as e:
+            print(f"Error exporting to InfluxDB: {str(e)}")
     
     def export_log(self):
         """Export the log in various formats for metrics and searching"""
@@ -421,7 +387,7 @@ class Calculator:
     def do_export(self, format_type, export_window):
         """Perform the actual export based on selected format"""
         if format_type == "influxdb":
-            self.export_to_influxdb()
+            self.export_to_influxdb(self.operation, self.current_number)
             export_window.destroy()
             return
             
@@ -565,16 +531,42 @@ class Calculator:
             self.should_clear_display = True
         
         elif text == '=':
-            self.calculate()
-            self.operation = None
-            self.first_number = None
+            if self.operation in ['sin', 'cos', 'tan']:
+                try:
+                    angle = self.first_number
+                    if self.operation == 'sin':
+                        result = math.sin(math.radians(angle))
+                    elif self.operation == 'cos':
+                        result = math.cos(math.radians(angle))
+                    else:  # tan
+                        result = math.tan(math.radians(angle))
+                    formatted_result = f"{result:.8f}".rstrip('0').rstrip('.')
+                    self.display_var.set(formatted_result)
+                    self.current_number = formatted_result
+                    self.add_to_log(f"{self.operation}({angle})", formatted_result)
+                    self.export_to_influxdb(f"{self.operation}({angle})", formatted_result)
+                except ValueError:
+                    self.display_var.set("Error")
+                    self.current_number = ""
+                    self.add_to_log(f"{self.operation}", "Error")
+                    self.export_to_influxdb(f"{self.operation}", "Error")
+                self.should_clear_display = True
+                self.operation = None
+                self.first_number = None
+            else:
+                self.calculate()
+                self.should_clear_display = True
+                self.operation = None
+                self.first_number = None
         
         elif text == 'C':
             self.display_var.set("")
             self.current_number = ""
             self.first_number = None
             self.operation = None
+            self.should_clear_display = False
             self.add_to_log("Clear", "")
+            self.export_to_influxdb("Clear", "")
         
         elif text == '±':
             if self.current_number:
@@ -583,58 +575,34 @@ class Calculator:
                 else:
                     self.current_number = '-' + self.current_number
                 self.display_var.set(self.current_number)
-                self.add_to_log("Sign change", self.current_number)
+                operation = f"{self.current_number} ±"
+                self.add_to_log(operation, self.current_number)
+                self.export_to_influxdb(operation, self.current_number)
+                self.should_clear_display = True
         
         elif text == '%':
             if self.current_number:
-                self.current_number = str(float(self.current_number) / 100)
+                result = str(float(self.current_number) / 100)
+                self.current_number = result
                 self.display_var.set(self.current_number)
-                self.add_to_log("Percentage", self.current_number)
+                operation = f"{self.current_number} %"
+                self.add_to_log(operation, result)
+                self.export_to_influxdb(operation, result)
+                self.should_clear_display = True
                 
         # Scientific calculator functions
-        elif text == 'sin':
+        elif text in ['sin', 'cos', 'tan']:
             if self.current_number:
-                try:
-                    result = math.sin(math.radians(float(self.current_number)))
-                    formatted_result = f"{result:.8f}".rstrip('0').rstrip('.')
-                    self.display_var.set(formatted_result)
-                    self.current_number = self.display_var.get()
-                    self.add_to_log(f"sin({self.current_number})", formatted_result)
-                except:
-                    self.display_var.set("Error")
-                    self.current_number = ""
-                    self.add_to_log("sin", "Error")
-        
-        elif text == 'cos':
-            if self.current_number:
-                try:
-                    result = math.cos(math.radians(float(self.current_number)))
-                    formatted_result = f"{result:.8f}".rstrip('0').rstrip('.')
-                    self.display_var.set(formatted_result)
-                    self.current_number = self.display_var.get()
-                    self.add_to_log(f"cos({self.current_number})", formatted_result)
-                except:
-                    self.display_var.set("Error")
-                    self.current_number = ""
-                    self.add_to_log("cos", "Error")
-        
-        elif text == 'tan':
-            if self.current_number:
-                try:
-                    result = math.tan(math.radians(float(self.current_number)))
-                    formatted_result = f"{result:.8f}".rstrip('0').rstrip('.')
-                    self.display_var.set(formatted_result)
-                    self.current_number = self.display_var.get()
-                    self.add_to_log(f"tan({self.current_number})", formatted_result)
-                except:
-                    self.display_var.set("Error")
-                    self.current_number = ""
-                    self.add_to_log("tan", "Error")
+                self.first_number = float(self.current_number)
+                self.operation = text
+                self.should_clear_display = True
         
         elif text == 'π':
             self.current_number = str(math.pi)
             self.display_var.set(self.current_number)
             self.add_to_log("π", self.current_number)
+            self.export_to_influxdb("π", self.current_number)
+            self.should_clear_display = True
 
     def calculate(self):
         if self.first_number is not None and self.operation and self.current_number:
@@ -658,13 +626,14 @@ class Calculator:
                 else:
                     result = f"{result:.8f}".rstrip('0').rstrip('.')
             
+            # Format the operation string consistently
+            operation_str = f"{self.first_number} {self.operation} {second_number}"
+            self.add_to_log(operation_str, str(result))
+            self.export_to_influxdb(operation_str, str(result))
+            
             self.display_var.set(str(result))
             self.current_number = str(result)
             self.first_number = float(result) if result != "Error" else None
-            
-            # Log the operation
-            operation_str = f"{self.first_number} {self.operation} {second_number}"
-            self.add_to_log(operation_str, str(result))
 
 if __name__ == '__main__':
     root = tk.Tk()

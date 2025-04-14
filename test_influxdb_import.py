@@ -6,6 +6,10 @@ import json
 import requests
 import random
 import math
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 def check_influxdb_connection():
     try:
@@ -83,64 +87,132 @@ def run_test():
         try:
             print(f"Operation {i+1}/10: {num1} {op} {num2}")
             
-            # Enter first number
-            for digit in num1:
-                app.button_clicked(digit)
-            time.sleep(0.2)  # Reduced sleep time
+            # Clear the display before each operation
+            app.button_clicked('C')
+            time.sleep(0.2)
             
-            # Enter operation
-            if op:
+            # Handle different types of operations
+            if op in ['sin', 'cos', 'tan']:
+                # For trig functions, enter the angle first
+                for digit in num2:  # num2 contains the angle
+                    app.button_clicked(digit)
+                time.sleep(0.2)
+                # Then press the function button
                 app.button_clicked(op)
-                time.sleep(0.2)  # Reduced sleep time
+                time.sleep(0.2)
+                # Press equals to get the result
+                app.button_clicked('=')
+                time.sleep(0.2)
+            elif op == 'π':
+                app.button_clicked('π')
+                time.sleep(0.2)
+            else:
+                # For regular operations
+                # Enter first number
+                for digit in num1:
+                    app.button_clicked(digit)
+                time.sleep(0.2)
                 
-                # Enter second number if exists
-                if num2:
-                    for digit in num2:
-                        app.button_clicked(digit)
-                    time.sleep(0.2)  # Reduced sleep time
+                # Enter operation
+                if op:
+                    app.button_clicked(op)
+                    time.sleep(0.2)
+                    
+                    # Enter second number if exists
+                    if num2:
+                        for digit in num2:
+                            app.button_clicked(digit)
+                        time.sleep(0.2)
+                        
+                        # Press equals for arithmetic operations
+                        if op in ['+', '-', '×', '÷']:
+                            app.button_clicked('=')
+                            time.sleep(0.2)
             
-            # Press equals
-            app.button_clicked("=")
-            time.sleep(0.2)  # Reduced sleep time
-            
-            # Verify result
+            # Get the result from the display
             result = app.display_var.get()
-            print(f"Expected: {expected}, Got: {result}")
             
-            # Clear for next operation
-            app.button_clicked("C")
-            time.sleep(0.2)  # Reduced sleep time
+            # Compare with expected result
+            try:
+                result_float = float(result)
+                expected_float = float(expected)
+                if abs(result_float - expected_float) < 0.0001:  # Allow small floating point differences
+                    print(f"Expected: {expected}, Got: {result}")
+                else:
+                    print(f"Expected: {expected}, Got: {result} (MISMATCH)")
+            except ValueError:
+                print(f"Expected: {expected}, Got: {result}")
             
-            # Process events to keep GUI responsive
-            root.update()
+            time.sleep(0.5)  # Wait between operations
             
         except Exception as e:
-            print(f"Error during operation {i+1}: {str(e)}")
-            continue
+            print(f"Error performing operation: {str(e)}")
     
-    # Export to InfluxDB
-    print("\nExporting logs to InfluxDB...")
+    # Close the calculator window
+    root.destroy()
+
+def test_calculator_operations():
+    """Test calculator operations and export to InfluxDB"""
+    print("Performing 10 calculator operations...")
     
-    # Make sure the InfluxDB settings file exists
-    if not os.path.exists("influxdb_settings.json"):
-        print("Creating InfluxDB settings file...")
-        with open("influxdb_settings.json", "w") as f:
-            f.write('''{
-    "url": "http://localhost:8086",
-    "token": "my-super-secret-auth-token",
-    "org": "calculator",
-    "bucket": "calculator_logs"
-}''')
+    # Create calculator instance
+    calc = Calculator()
     
-    # Export directly using the method
-    try:
-        app.export_to_influxdb()
-        print("Export successful!")
-    except Exception as e:
-        print(f"Export failed: {str(e)}")
+    # Test cases with expected results
+    test_cases = [
+        ("33 + 54", 87),
+        ("63 - 23", 40),
+        ("7 × 17", 119),
+        ("46 ÷ 2", 23.0),
+        ("7 %", 0.07),
+        ("80 ±", -80),
+        ("sin 184", -0.06975647),
+        ("cos 186", -0.9945219),
+        ("tan 295", -2.14450692),
+        ("π", math.pi)
+    ]
     
-    # Clean up
-    root.quit()
+    # Run test cases
+    for i, (operation, expected) in enumerate(test_cases, 1):
+        print(f"Operation {i}/10: {operation}")
+        
+        # Perform calculation
+        if operation == "π":
+            result = calc.pi()
+        elif "sin" in operation:
+            result = calc.sin(float(operation.split()[1]))
+        elif "cos" in operation:
+            result = calc.cos(float(operation.split()[1]))
+        elif "tan" in operation:
+            result = calc.tan(float(operation.split()[1]))
+        elif "%" in operation:
+            result = calc.percentage(float(operation.split()[0]))
+        elif "±" in operation:
+            result = calc.sign_change(float(operation.split()[0]))
+        else:
+            parts = operation.split()
+            if len(parts) == 3:
+                num1, op, num2 = parts
+                if op == "+":
+                    result = calc.add(float(num1), float(num2))
+                elif op == "-":
+                    result = calc.subtract(float(num1), float(num2))
+                elif op == "×":
+                    result = calc.multiply(float(num1), float(num2))
+                elif op == "÷":
+                    result = calc.divide(float(num1), float(num2))
+            else:
+                result = float(operation)
+        
+        print(f"Expected: {expected}, Got: {result}")
+        
+        # Export to InfluxDB
+        try:
+            calc.export_to_influxdb(operation, result)
+        except Exception as e:
+            print(f"Export failed for operation {operation}: {str(e)}")
+    
+    print("\nAll operations completed.")
 
 if __name__ == "__main__":
     run_test() 
