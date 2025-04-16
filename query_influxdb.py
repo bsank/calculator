@@ -207,8 +207,8 @@ def query_calculator_data():
                             
                             # Parse the timestamp
                             time_str = values[time_idx]
-                            dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
-                            formatted_time = dt.strftime('%Y-%m-%d %H:%M:%S')
+                            #dt = datetime.fromisoformat(time_str.replace('Z', '+00:00'))
+                            #formatted_time = dt.strftime('%Y-%m-%d %H:%M:%S')
                             
                             # Get the result value
                             result = values[value_idx]
@@ -216,7 +216,8 @@ def query_calculator_data():
                             # Clean up and format the operation
                             operation = clean_operation(operation_str)
                             
-                            print(f"{formatted_time:<25} {operation:<30} {result:<20}")
+                            #print(f"{formatted_time:<25} {operation:<30} {result:<20}")
+                            print(f"{time_str:<25} {operation:<30} {result:<20}")
                             record_count += 1
                         except Exception as e:
                             print(f"Error processing row: {e}")
